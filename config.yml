@@ -1,0 +1,115 @@
+name: arcane-binaryedge
+version: 1.0.0
+license: BSD-2-Clause
+author:
+  name: Conor Quigley
+  url: https://konundrum.org/
+
+genopts:
+  dotstorm: true
+
+# Defines required role permissions.
+perms:
+  - perm: [arcane, binaryedge, user]
+    desc: Controls user access to Arcane BinaryEdge pkg.
+    gate: cortex
+
+docs:
+  - content: |
+      This package provides BinaryEdge API support for Synapse.
+      This pkg is in development and is not stable.
+    title: Arcane Observatory Synapse BinaryEdge Package.
+
+modules:
+  - name: arcane.binaryedge.setup
+  - name: arcane.binaryedge.ingest
+    modconf:
+      source: 8d49f39dc45dc906ad8be3b8a53d0f62
+      debug_api: false
+  - name: arcane.binaryedge.api
+    asroot:perms:
+      - [arcane, binaryedge, user]
+    modconf:
+      api_url: https://api.binaryedge.io/v2
+      asof: "-30 days"
+
+commands:
+  - name: arcane.binaryedge.setup.apikey
+    descr: Setup Arcane Observatory BinaryEdge API Key
+    # Do not allow to run as root.
+    cmdargs:
+      - - apikey
+        - type: str
+          help: BinaryEdge Key.
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --self
+        - default: false
+          action: store_true
+          help: Set API for current user only.
+          type: bool
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+
+  - name: arcane.binaryedge.user.subscription
+    descr: Get BinaryEdge user subscription information.
+    cmdargs:
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+
+  - name: arcane.binaryedge.target
+    descr: Query BinaryEdge for information about IP / CIDR (/24).
+    asroot: False
+    cmdargs:
+      - - --historical
+        - default: false
+          action: store_true
+          help: Retrieve details about an Host, with data up to 6 months.
+          type: bool
+
+      - - --asof
+        - default: "-30 days"
+          help: Specify the maximum age for a cached result. To disable caching, use --asof now.
+          type: str
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --yield
+        - default: false
+          action: store_true
+          help: Yield the newly created nodes.
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+    forms:
+      input:
+        - inet:ipv4
+        - inet:cidr4
+      output:
+        - inet:flow

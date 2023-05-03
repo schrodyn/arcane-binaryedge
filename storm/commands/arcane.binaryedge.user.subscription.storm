@@ -1,0 +1,10 @@
+init {
+    if $cmdopts.debug {
+        $lib.debug = $lib.true
+    }
+    $ingest = $lib.import(arcane.binaryedge.ingest)
+}
+
+$ingest.init_meta_source()
+
+$ingest.get_user_subscription()

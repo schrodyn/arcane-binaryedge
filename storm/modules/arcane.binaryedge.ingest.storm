@@ -1,0 +1,416 @@
+init {
+    $api = $lib.import(arcane.binaryedge.api)
+    $srcnode = $lib.null
+}
+
+function init_meta_source() {
+    if ($srcnode = $lib.null) {
+        if ($lib.debug) {
+            $lib.print(
+                "[arcane::binaryedge::ingest::init_meta_source] Setting meta:source={source}",
+                source=$modconf.source
+            )
+        }
+        [ meta:source=$modconf.source :name="arcane-binaryedge" ]
+        $srcnode = $node
+    }
+    fini { return($lib.null) }
+}
+
+function get_user_subscription() {
+
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::get_user_subscription]")
+    }
+
+    $user_api_resp = $api.get_user_subscription()
+    if ($user_api_resp != $lib.null) {
+        $lib.pprint($user_api_resp)
+    }
+
+    fini{ return($lib.null) }
+}
+
+function add_scanner(origin) {
+
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::add_scanner]")
+    }
+    if ($origin.module != $lib.null) {
+        $tag = `cno.scanner.binaryedge.{$origin.module}`
+    }
+    // TODO: Use type and not module?
+    else {
+        $tag = 'cno.scanner.binaryedge'
+    }
+
+    [
+        inet:ipv4=$origin.ip
+        :loc?=$origin.country
+        .seen=$origin.ts
+        +#$tag
+    ]
+
+    fini{return($lib.null)}
+}
+
+// inet:flow generator
+function create_inet_flow(result, extra_data=$lib.null) {
+
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::create_inet_flow]")
+    }
+
+    $guid = $lib.guid(
+        (
+            "arcane-binaryedge",
+            $extra_data,
+            //$result.origin.type,
+            //$result.origin.ip,
+            //$result.origin.port,
+            //$result.origin.ts,
+            $result.target.ip,
+            $result.target.port,
+            $result.target.protocol,
+        )
+    )
+
+    $inet_server = $lib.str.format(
+        "{protocol}://{dstip}:{dstport}",
+        protocol=$result.target.protocol,
+        dstip=$result.target.ip,
+        dstport=$result.target.port
+    )
+
+    [
+        inet:flow=$guid
+        :time=$result.origin.ts
+        :dst=$inet_server
+        :dst:proto=$result.target.protocol
+    ]
+    //:src:ipv4=$result.origin.ip
+
+    /*if $result.origin.port {
+        $inet_client = $lib.str.format(
+            "{protocol}://{srcip}:{srcport}",
+            protocol=$result.target.protocol,
+            srcip=$result.origin.ip,
+            srcport=$result.origin.port
+        )
+        [:src=$inet_client]
+    }*/
+
+    switch $result.target.protocol {
+        "tcp": {
+            [:ip:proto=6]
+        }
+        "udp": {
+            [:ip:proto=17]
+        }
+        "icmp": {
+            [:ip:proto=1]
+        }
+        *: {
+            $lib.warn(`arcane::binaryedge::ingest::] Unhandled IP protocol: {$result.target.protocol}`)
+        }
+    }
+}
+
+function add_inet_flow(result) {
+
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::ingest::add_inet_flow]')
+    }
+    /*
+        ➜ jq -r '.events[].results[].origin.type' query_ip_target_response.json | sort | uniq
+        jarm
+        service-simple
+        ssh
+        ssl-simple
+        webv2
+    */
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::add_inet_flow] {$result.origin.type}`)
+    }
+    switch $result.origin.type {
+        "port": {} // ignored
+        "service-simple": {
+            yield $create_inet_flow($result)
+
+            $service = $result.result.data.service
+            [:dst:handshake?=$service.banner]
+            if ($service.probe != "") {[ :src:handshake?=$service.probe]}
+            if $service.cpe {[:dst:cpes?=$service.cpe]}
+
+            $softnames = $lib.list($service.product)
+            if $service.ostype {$softnames.append($service.ostype)}
+            [:dst:softnames=$softnames]
+
+            $tag = $lib.str.format(
+                "rep.binaryedge.{name}",
+                name=$service.name
+            )
+            [+#$tag]
+        }
+        "ssl-simple": {
+            yield $create_inet_flow($result)
+
+            $cert = $add_ssl_certs($result)
+            // Leaf certificate was returned.
+            if ($cert != $lib.null) {
+                [:dst:ssl:cert=$cert]
+            }
+        }
+        "ssh": {
+            for $cypher in $result.result.data.cyphers {
+                yield $create_inet_flow($result, $cypher)
+
+                if $result.result.data.banner {
+                    [:dst:handshake?=$result.result.data.banner]
+                }
+
+                [
+                    :dst:ssh:key={[
+                        crypto:key=($cypher.key, $cypher.cypher)
+                        :public=$lib.hex.encode($lib.base64.decode($cypher.key))
+                        :algorithm=$cypher.cypher
+                        :public:md5=$cypher.fingerprint.replace(':', '')
+                    ]}
+                ]
+            }
+        }
+        *: {
+            $lib.warn(`Unhandled service type: {$result.origin.type}`)
+        }
+    }
+}
+
+// https://docs.binaryedge.io/modules/ssl-simple/
+// "certificate_chain - the certificate chain sent by the server; index
+// 0 is the leaf certificate"
+function add_ssl_certs(result) {
+
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::ingest::add_ssl_certs]')
+    }
+    $cert_info = $result.result.data.cert_info
+    $leaf = $lib.null
+
+    // Start top down.
+    $cert_chain = $lib.list()
+    $cert_chain.extend($cert_info.certificate_chain)
+    $cert_chain.reverse()
+
+    for $cert in $cert_chain {
+        $leaf = $add_ssl_cert($cert)
+    }
+
+    return($leaf)
+}
+
+function add_ssl_cert(cert) {
+
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::ingest::add_ssl_cert]')
+    }
+    // TODO: Do I want to end up with duplicate certificates?
+    // How do I create the certificate consistent with the output of
+    // certificate representations of other APIs?
+
+    // WARNING: HAX
+    $fqdns = $lib.list()
+    $cert_dict = $cert.as_dict
+    $public_key_info = $cert_dict.public_key_info
+
+    $modulus = $public_key_info.modulus.replace(':', '')
+    $sha256_fp = $cert.sha256_fingerprint.replace(':', '')
+    $serial_number = $cert_dict.serial_number
+
+    $guid = $lib.guid($sha256_fp, $modulus, $serial_number)
+
+    $subject_dn = $normalise_ssl_cert_dn($cert_dict.subject.distinguished_name)
+    $issuer_dn = $normalise_ssl_cert_dn($cert_dict.issuer.distinguished_name)
+
+    [
+        crypto:x509:cert=$guid
+        :subject=$subject_dn
+        :issuer=$issuer_dn
+        :serial=$lib.hex.fromint($serial_number, 20)
+        :validity:notbefore=$cert_dict.validity.not_before
+        :validity:notafter=$cert_dict.validity.not_after
+        :rsa:key=($modulus, $public_key_info.exponent)
+        :version=$cert_dict.version
+        :selfsigned=$cert_dict.self_signed
+        :sha256=$sha256_fp
+        :sha1=$cert.sha1_fingerprint.replace(':', '')
+    ]
+
+    if $cert_dict.subject.common_name {
+        ($ok, $fqdn) = $lib.trycast(inet:fqdn, $cert_dict.subject.common_name)
+        if $ok {
+            $fqdns.append($fqdn)
+        }
+    }
+
+    if $cert_dict.extensions {
+        if $cert_dict.extensions.subject_alt_name {
+            $sans = $lib.list()
+            for $san in $cert_dict.extensions.subject_alt_name {
+                // DANGER - Assuming always DNS is bad, M'Kay!
+                // Model internal certs where I have with IP: SANS
+                $sans.append(('dns', $san))
+                ($ok, $url) = $lib.trycast(inet:fqdn, $san)
+                if $ok {
+                    $fqdns.append($san)
+                }
+            }
+            [:ext:sans=$sans]
+        }
+    }
+
+    [:identities:fqdns=$fqdns]
+
+    return($node)
+}
+
+// Dear X.500 Lord, please forgive me.
+function normalise_ssl_cert_dn(dn) {
+
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::ingest::normalise_ssl_cert_dn]')
+    }
+    $parts = $dn.split(',')
+    // BE seem to display these in reverse order to what OpenSSL
+    // presents. Tut tut.
+    $parts.reverse()
+
+    $i=0
+    for $p in $parts {
+        $vals = $p.split(':')
+
+        $j=0
+        for $v in $vals {
+            $vals.$j = $v.lstrip()
+            $j=($j+1)
+        }
+
+        // ➜ openssl x509 -subject -issuer -noout -in 1.crt
+        // subject= /C=IE/ST=Leinster/L=Dublin/O=Konundrum/OU=WWW/CN=konundrum.org/emailAddress=webmaster@konundrum.org
+        // issuer= /C=IE/ST=Leinster/L=Dublin/O=Konundrum/OU=WWW/CN=konundrum.org/emailAddress=webmaster@konundrum.org
+
+        switch $vals.0 {
+            "Common Name": {
+                $vals.0 = "CN"
+            }
+            "Organization": {
+                $vals.0 = "O"
+            }
+            "Country": {
+                $vals.0 = "C"
+            }
+            "Organizational Unit": {
+                $vals.0 = "OU"
+            }
+            "Locality": {
+                $vals.0 = "L"
+            }
+            "Email Address": {
+                $vals.0 = "emailAddress"
+            }
+            "State/Province": {
+                $vals.0 = "ST"
+            }
+            *: {
+                $lib.warn("Unhandled field: {field}", field=$vals.0)
+            }
+        }
+
+        $parts.$i = $lib.str.join("=", $vals)
+        $i=($i+1)
+    }
+
+    $norm = $lib.str.join('/', $parts)
+
+    return($norm)
+}
+
+function query_ip_target(n, asof, historical=$lib.false) {
+
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::query_ip_target] arg node $n")
+        $lib.print("[arcane::binaryedge::ingest::query_ip_target] asof: $asof")
+        $lib.print("[arcane::binaryedge::ingest::query_ip_target] historical $historical")
+    }
+
+    $target = $n.repr()
+
+    $api_resp = $api.query_ip_target($target, $asof, $historical)
+    if ($api_resp = $lib.null) {yield $lib.null}
+
+    $events = $api_resp.events
+
+    for $evt in $events {
+        if ($historical = $lib.true) {
+            yield $add_inet_flow($evt)
+        }
+        else {
+            for $res in $evt.results {
+                $add_scanner($res.origin)
+                yield $add_inet_flow($res)
+            }
+        }
+    }
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_ip_target] Yielding {$node}`)
+    }
+}
+
+function add_http_request(http_data,
+                         inet_server,
+                         ts=$lib.null,
+                         inet_flow=$lib.null)
+{
+
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::add_http_request]")
+    }
+
+    $req = $http_data.request
+    $resp = $http_data.response
+
+    $guid = $lib.guid(
+        $req.method,
+        $req.url,
+        $resp.status.code,
+        $resp.body.sha256_hash,
+        $inet_flow
+    )
+
+    $req_hdrs = $lib.list()
+    for ($k, $v) in $req.headers {
+        $req_hdrs.append(($k, $v))
+    }
+
+    $resp_hdrs = $lib.list()
+    for ($k, $v) in $resp.headers.headers {
+        $resp_hdrs.append(($k, $v))
+    }
+
+    [
+        inet:http:request=$guid
+        :method=$req.method
+        :url=$req.url
+        :path=$req.path
+        :headers=$req_hdrs
+        :response:headers=$resp_hdrs
+        :server=$inet_server
+        :response:code=$resp.status.code
+        :response:body=$resp.body.sha256_hash
+        :time=$ts
+    ]
+
+    ///// Optional(ish)
+    // :flow
+    // :client
+    return($lib.null)
+}

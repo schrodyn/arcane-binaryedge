@@ -1,0 +1,140 @@
+init {
+    if $lib.debug {$lib.print('Arcane BinaryEdge API Module')}
+    $setup = $lib.import(arcane.binaryedge.setup)
+}
+
+function http_get(api_url, params=$lib.null, asof=$modconf.asof) {
+    $apikey = $setup.get_api_key()
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::http_get] API URL {url}',
+            url=$api_url
+        )
+    }
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::http_get] GET params {params}',
+            params=$params
+        )
+    }
+
+    $headers = $lib.dict(
+        "Accept" = "application/json",
+        "X-Key" = $apikey
+    )
+
+    $cache_guid = $lib.guid(($api_url, $headers, $params))
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::api::http_get] Cache key:{cache_guid}',
+        cache_guid=$cache_guid)
+    }
+
+    if $lib.debug {
+        $lib.print('[arcane::binaryedge::api::http_get] asof:{asof}',
+        asof=$asof)
+    }
+
+    $cache_hit = $lib.jsonstor.cacheget(
+        'arcane-binaryedge', $cache_guid, $asof)
+
+    if ($cache_hit != $lib.null) {
+        if $lib.debug {
+            $lib.print("[arcane::binaryedge::api::http_get] Cache hit!")
+        }
+        return($cache_hit)
+    }
+    else {
+        $resp = $lib.inet.http.get($api_url, headers=$headers, params=$params)
+        if ($resp.code != 200) {
+            $lib.warn(
+                "[arcane::binaryedge::api::http_get] BinaryEdge API ({api_url}) returned HTTP code: {code}",
+                api_url=$api_url,
+                code=$resp.code
+            )
+            return($lib.null)
+        }
+
+        $lib.jsonstor.cacheset('arcane-binaryedge', $cache_guid, $resp.json())
+
+        return($resp.json())
+    }
+}
+
+/*
+ _   _
+| | | |___  ___ _ __
+| | | / __|/ _ \ '__|
+| |_| \__ \  __/ |
+ \___/|___/\___|_|
+*/
+
+/*
+/v2/user/subscription
+Return details about your current subscription package.
+*/
+function get_user_subscription() {
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::get_user_subscription] Retrieving subscription',
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+    $api_url = $lib.str.format(
+        "{api_base_url}/user/subscription",
+        api_base_url=$api_base_url
+    )
+
+    return($http_get($api_url, $lib.null, "now"))
+}
+
+/*
+ _   _           _
+| | | | ___  ___| |_
+| |_| |/ _ \/ __| __|
+|  _  | (_) \__ \ |_
+|_| |_|\___/|___/\__|
+*/
+
+/*
+/v2/query/ip/{target}
+
+Details about an Host. List of recent events for the specified host,
+including details of exposed ports and services.
+
+Note: Querying CIDRs is available for paid subscriptions only. When
+using CIDR, the number of credits that will be spent correspond to the
+number of targets that returned results. Example: a request for a /24
+(256 targets) in which only 200 targets have results, will decrement 200
+credits.
+
+Parameters
+    target: [String] Target IP address or CIDR up to /24
+*/
+function query_ip_target(target, asof, historical=$lib.false) {
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::query_ip_target] Querying details about: {target}',
+            target=$target
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+
+    if ($historical = $lib.true) {
+        $api_url = $lib.str.format(
+            "{api_base_url}/query/ip/historical/{target}",
+            api_base_url=$api_base_url,
+            target=$target
+        )
+    }
+    else {
+        $api_url = $lib.str.format(
+            "{api_base_url}/query/ip/{target}",
+            api_base_url=$api_base_url,
+            target=$target
+        )
+    }
+
+    return($http_get($api_url, $lib.null, $asof))
+}

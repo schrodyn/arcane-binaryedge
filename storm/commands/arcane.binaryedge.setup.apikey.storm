@@ -1,0 +1,16 @@
+init {
+    if $cmdopts.debug { $lib.debug = $lib.true }
+}
+
+$setup = $lib.import(arcane.binaryedge.setup)
+
+if $lib.debug { $lib.print("command: arcane.binaryedge.setup.apikey") }
+
+if $cmdopts.self {
+    $lib.print("Setting Aracne BinaryEdge API key for the current user.")
+}
+else {
+    $lib.print("Setting Arcane BinaryEdge API key for all users.")
+}
+
+$setup.set_api_key($cmdopts.apikey, self=$cmdopts.self)
