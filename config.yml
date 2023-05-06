@@ -113,3 +113,35 @@ commands:
         - inet:cidr4
       output:
         - inet:flow
+
+  - name: arcane.binaryedge.domains.subdomains
+    descr: Query BinaryEdge for subdomains of a domain.
+    asroot: False
+    cmdargs:
+      - - --asof
+        - default: "-30 days"
+          help: Specify the maximum age for a cached result. To disable caching, use --asof now.
+          type: str
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --yield
+        - default: false
+          action: store_true
+          help: Yield the newly created nodes.
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+    forms:
+      input:
+        - inet:fqdn
+      output:
+        - inet:fqdn
