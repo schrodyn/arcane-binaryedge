@@ -51,6 +51,7 @@ function http_get(api_url, params=$lib.null, asof=$modconf.asof) {
                 api_url=$api_url,
                 code=$resp.code
             )
+            $lib.pprint($resp)
             return($lib.null)
         }
 
