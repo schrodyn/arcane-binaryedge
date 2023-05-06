@@ -50,6 +50,7 @@ function add_scanner(origin) {
         .seen=$origin.ts
         +#$tag
     ]
+    [ <(seen)+ { yield $srcnode } ]
 
     fini{return($lib.null)}
 }
@@ -65,10 +66,10 @@ function create_inet_flow(result, extra_data=$lib.null) {
         (
             "arcane-binaryedge",
             $extra_data,
-            //$result.origin.type,
+            $result.origin.type,
             //$result.origin.ip,
             //$result.origin.port,
-            //$result.origin.ts,
+            $result.origin.ts,
             $result.target.ip,
             $result.target.port,
             $result.target.protocol,
@@ -88,6 +89,11 @@ function create_inet_flow(result, extra_data=$lib.null) {
         :dst=$inet_server
         :dst:proto=$result.target.protocol
     ]
+
+    // if $lib.debug {
+    //     $lib.print("[arcane::binaryedge::ingest::create_inet_flow] flow node created")
+    //     $lib.print(`node: {$node}`)
+    // }
     //:src:ipv4=$result.origin.ip
 
     /*if $result.origin.port {
@@ -114,6 +120,7 @@ function create_inet_flow(result, extra_data=$lib.null) {
             $lib.warn(`arcane::binaryedge::ingest::] Unhandled IP protocol: {$result.target.protocol}`)
         }
     }
+    [ <(seen)+ { yield $srcnode } ]
 }
 
 function add_inet_flow(result) {
@@ -128,12 +135,40 @@ function add_inet_flow(result) {
         ssh
         ssl-simple
         webv2
+
+        WARNING: Unhandled service type: bluekeep
+        WARNING: Target IP: 45.138.16.231
+        WARNING: Unhandled service type: ftp
+        WARNING: Target IP: 107.189.7.144
+        WARNING: Unhandled service type: service
+        WARNING: Target IP: 154.47.20.180
+        WARNING: Unhandled service type: bluekeep
+        WARNING: Target IP: 45.138.16.231
     */
     if $lib.debug {
         $lib.print(`[arcane::binaryedge::ingest::add_inet_flow] {$result.origin.type}`)
     }
     switch $result.origin.type {
         "port": {} // ignored
+        "service": {
+            yield $create_inet_flow($result)
+
+            $service = $result.result.data.service
+            [:dst:handshake?=$service.banner]
+            if ($service.probe != "") {[ :src:handshake?=$service.probe]}
+            if $service.cpe {[:dst:cpes?=$service.cpe]}
+
+            $softnames = $lib.list($service.product)
+            if $service.ostype {$softnames.append($service.ostype)}
+            if $service.extrainfo {$softnames.append($service.extrainfo)}
+            [:dst:softnames?=$softnames]
+
+            $tag = $lib.str.format(
+                "rep.binaryedge.{name}",
+                name=$service.name
+            )
+            [+#$tag]
+        }
         "service-simple": {
             yield $create_inet_flow($result)
 
@@ -144,7 +179,8 @@ function add_inet_flow(result) {
 
             $softnames = $lib.list($service.product)
             if $service.ostype {$softnames.append($service.ostype)}
-            [:dst:softnames=$softnames]
+            if $service.extrainfo {$softnames.append($service.extrainfo)}
+            [:dst:softnames?=$softnames]
 
             $tag = $lib.str.format(
                 "rep.binaryedge.{name}",
@@ -179,8 +215,76 @@ function add_inet_flow(result) {
                 ]
             }
         }
+        "webv2": {
+            yield $create_inet_flow($result)
+
+            // TODO: Better error handling. This check was brought
+            // around from BEdge not having a response but would contain
+            // an "error" key to indicate why it failed.
+            // "error": "ConnectTimeout on url http://209.141.58.72:8080/"
+            if $result.result.data.response {{
+                $add_http_request(
+                    $result.result.data,
+                    $result.origin.ts,
+                    $node
+                )
+            }}
+        }
+        "jarm": {
+            // Do I want to edge this back to a flow? Would I loose
+            // anything by not having it edged back to a flow? Can I
+            // have a jarm object in the API response and not also have
+            // another "thing" that would create a flow which records
+            // the target IP had port X open?
+            $add_jarm($result)
+        }
+        "smb": {
+            yield $create_inet_flow($result)
+
+            if ($result.result.data.shares != $lib.null) {
+                $lib.warn(`Unhandled SMB shares for {$result.target.ip}`)
+                $lib.print($result.result.data.shares)
+            }
+
+            $data = $result.result.data
+
+            if $data.cpe {[:dst:cpes?=$data.cpe]}
+
+            $softnames = $lib.list($data.potential_os)
+            [:dst:softnames?=$softnames]
+
+            [+#rep.binaryedge.smb]
+        }
+        "rdp": {
+            // TODO: Download JPEG with RDP screenshot and save into the
+            // quarry.
+            yield $create_inet_flow($result)
+            [+#rep.binaryedge.rdp]
+        }
+        "bluekeep": {
+            // TODO: Download JPEG with RDP screenshot and save into the
+            // quarry.
+            yield $create_inet_flow($result)
+            [+#rep.binaryedge.rdp]
+
+            if ($result.result.data.status != "SAFE") {
+                $t=`rep.binaryedge.rdp.bluekeep_{$result.result.data.status}`
+                [+#$t]
+            }
+        }
+        "ftp": {
+            // TODO: Download JPEG with RDP screenshot and save into the
+            // quarry.
+            yield $create_inet_flow($result)
+            [+#rep.binaryedge.ftp]
+            if ($result.result.data != $lib.null) {
+                $lib.warn(`Unhandled FTP data for {$result.target.ip}`)
+                $lib.print(`{$result.result}`)
+            }
+        }
         *: {
             $lib.warn(`Unhandled service type: {$result.origin.type}`)
+            $lib.warn(`Target IP: {$result.target.ip}`)
         }
     }
 }
@@ -244,6 +348,7 @@ function add_ssl_cert(cert) {
         :sha256=$sha256_fp
         :sha1=$cert.sha1_fingerprint.replace(':', '')
     ]
+    [ <(seen)+ { yield $srcnode } ]
 
     if $cert_dict.subject.common_name {
         ($ok, $fqdn) = $lib.trycast(inet:fqdn, $cert_dict.subject.common_name)
@@ -300,25 +405,25 @@ function normalise_ssl_cert_dn(dn) {
 
         switch $vals.0 {
             "Common Name": {
-                $vals.0 = "CN"
+                $vals.0 = "/CN"
             }
             "Organization": {
-                $vals.0 = "O"
+                $vals.0 = "/O"
             }
             "Country": {
-                $vals.0 = "C"
+                $vals.0 = "/C"
             }
             "Organizational Unit": {
-                $vals.0 = "OU"
+                $vals.0 = "/OU"
             }
             "Locality": {
-                $vals.0 = "L"
+                $vals.0 = "/L"
             }
             "Email Address": {
-                $vals.0 = "emailAddress"
+                $vals.0 = "/emailAddress"
             }
             "State/Province": {
-                $vals.0 = "ST"
+                $vals.0 = "/ST"
             }
             *: {
                 $lib.warn("Unhandled field: {field}", field=$vals.0)
@@ -329,7 +434,7 @@ function normalise_ssl_cert_dn(dn) {
         $i=($i+1)
     }
 
-    $norm = $lib.str.join('/', $parts)
+    $norm = $lib.str.join('', $parts)
 
     return($norm)
 }
@@ -337,9 +442,9 @@ function normalise_ssl_cert_dn(dn) {
 function query_ip_target(n, asof, historical=$lib.false) {
 
     if $lib.debug {
-        $lib.print("[arcane::binaryedge::ingest::query_ip_target] arg node $n")
-        $lib.print("[arcane::binaryedge::ingest::query_ip_target] asof: $asof")
-        $lib.print("[arcane::binaryedge::ingest::query_ip_target] historical $historical")
+        $lib.print(`[arcane::binaryedge::ingest::query_ip_target] arg node {$n}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_ip_target] asof: {$asof}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_ip_target] historical {$historical}`)
     }
 
     $target = $n.repr()
@@ -366,7 +471,6 @@ function query_ip_target(n, asof, historical=$lib.false) {
 }
 
 function add_http_request(http_data,
-                         inet_server,
                          ts=$lib.null,
                          inet_flow=$lib.null)
 {
@@ -383,7 +487,7 @@ function add_http_request(http_data,
         $req.url,
         $resp.status.code,
         $resp.body.sha256_hash,
-        $inet_flow
+        $inet_flow.repr()              // TODO: Rethink this.
     )
 
     $req_hdrs = $lib.list()
@@ -396,21 +500,108 @@ function add_http_request(http_data,
         $resp_hdrs.append(($k, $v))
     }
 
-    [
-        inet:http:request=$guid
-        :method=$req.method
-        :url=$req.url
-        :path=$req.path
-        :headers=$req_hdrs
-        :response:headers=$resp_hdrs
-        :server=$inet_server
-        :response:code=$resp.status.code
-        :response:body=$resp.body.sha256_hash
-        :time=$ts
-    ]
+    // TODO: Keep checking for cookies. I like cookies.
 
-    ///// Optional(ish)
-    // :flow
-    // :client
+    if $resp.redirects {
+        // TODO: Create HTTP reqeust.
+        for $redir in $resp.redirects {
+            [
+                inet:urlredir=($redir.redirect_uri, $redir.headers.location)
+            ] | spin
+        }
+    }
+
+    try {
+        [
+            inet:http:request=$guid
+            :method=$req.method
+            :url=$req.url
+            :path=$req.path
+            :headers=$req_hdrs
+            :response:headers=$resp_hdrs
+            :server=$inet_flow.props.dst
+            :response:code=$resp.status.code
+            :response:body=$resp.body.sha256_hash
+            :time=$ts
+            :flow=$inet_flow.repr()
+        ]
+    }
+    catch BadTypeValu as err {
+        $lib.warn(`[arcane::binaryedge::ingest::add_http_request] Unexpected error {$err}`)
+        $lib.print($http_data)
+        $lib.print(`{$inet_flow}`)
+        $lib.exit("[arcane::binaryedge::ingest::add_http_request] Bailing")
+    }
+
+    if $resp.headers.header_order_md5_hash {
+        [ +(refs)>
+            {[hash:md5=$resp.headers.header_order_md5_hash
+             +#rep.binaryedge.header_order_md5_hash
+            ]}
+        ]
+    }
+    [ <(seen)+ { yield $srcnode } ]
+
     return($lib.null)
+}
+
+function add_jarm(result) {
+    if $lib.debug {
+        $lib.print("[arcane::binaryedge::ingest::add_jarm]")
+    }
+
+    $inet_server = $lib.str.format(
+        "{protocol}://{dstip}:{dstport}",
+        protocol=$result.target.protocol,
+        dstip=$result.target.ip,
+        dstport=$result.target.port
+    )
+    $jarmhash = $result.result.data.jarm_hash
+
+    [inet:ssl:jarmsample=($inet_server, $jarmhash)]
+    [<(seen)+ {yield $srcnode}]
+
+    return($lib.null)
+}
+
+function query_domains_subdomains(fqdn, asof) {
+
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_subdomains] arg node {$fqdn}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_subdomains] asof: {$asof}`)
+    }
+
+    // API response doesn't tell us we have a next page. Gotta figure it
+    // out for ourselves.
+    $has_next = $lib.true
+    $current_page = 1
+
+    while ($has_next)
+    {
+        // query
+        $api_resp = $api.query_domains_subdomains($fqdn.repr(), $asof, $current_page)
+        if ($api_resp = $lib.null) { yield $lib.null }
+
+        // ingest
+        for $evt in $api_resp.events {
+            [inet:fqdn=$evt]
+            yield $node
+        }
+
+        // Get total number of pages.
+        if ($api_resp.total > $api_resp.pagesize) {
+            $num_pages = (($api_resp.total / $api_resp.pagesize)+1)
+            if ($num_pages > 500) {$num_pages=500}
+
+            $current_page = ($current_page+1)
+            if ($current_page > $num_pages) {
+                $has_next = $lib.false
+            }
+        }
+        else { $has_next = $lib.false }
+    }
+
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_subdomains] Yielding {$node}`)
+    }
 }
