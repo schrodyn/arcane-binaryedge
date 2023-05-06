@@ -139,3 +139,24 @@ function query_ip_target(target, asof, historical=$lib.false) {
 
     return($http_get($api_url, $lib.null, $asof))
 }
+
+function query_domains_subdomains(fqdn, asof, page) {
+
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::query_domains_subdomains] Querying subdomains for: {fqdn}',
+            fqdn=$fqdn
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+    $params = $lib.dict(page=$page)
+
+    $api_url = $lib.str.format(
+        "{api_base_url}/query/domains/subdomain/{fqdn}",
+        api_base_url=$api_base_url,
+        fqdn=$fqdn
+        )
+
+    return($http_get($api_url, $params, $asof))
+}
