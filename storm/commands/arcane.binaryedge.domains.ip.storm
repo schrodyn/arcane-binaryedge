@@ -1,0 +1,12 @@
+init {
+    if $cmdopts.debug { $lib.debug = $lib.true }
+
+    $ingest = $lib.import(arcane.binaryedge.ingest)
+}
+
+if $lib.debug { $lib.print("command: arcane.binaryedge.domains.ip") }
+
+$ingest.init_meta_source()
+if $node {
+    divert $cmdopts.yield $ingest.query_domains_ip($node, $cmdopts.asof)
+}

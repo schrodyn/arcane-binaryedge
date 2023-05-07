@@ -181,3 +181,91 @@ commands:
         - inet:dns:ns
         - inet:dns:txt
         - inet:dns:aaaa
+        - inet:dns:cname
+
+  - name: arcane.binaryedge.domains.ip
+    descr: Query BinaryEdge for DNS records that have the specified IP address in their A or AAAA records.
+    asroot: False
+    cmdargs:
+      - - --asof
+        - default: "-30 days"
+          help: Specify the maximum age for a cached result. To disable caching, use --asof now.
+          type: str
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --yield
+        - default: false
+          action: store_true
+          help: Yield the newly created nodes.
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+    forms:
+      input:
+        - inet:ipv4
+      output:
+        - inet:dns:a
+        - inet:dns:mx
+        - inet:dns:ns
+        - inet:dns:txt
+        - inet:dns:aaaa
+        - inet:dns:cname
+
+  - name: arcane.binaryedge.domains.search
+    descr: Query BinaryEdge for Domains/DNS data based on a Query.
+    asroot: False
+    cmdargs:
+      - - query
+        - type: str
+          help: |
+            Search query. Can be free text or prefixed with a DNS record type.
+            Supported types are:
+              - A
+              - AAAA
+              - NS
+              - MX
+              - CNAME
+              - TXT
+
+
+      - - --asof
+        - default: "-30 days"
+          help: Specify the maximum age for a cached result. To disable caching, use --asof now.
+          type: str
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --yield
+        - default: false
+          action: store_true
+          help: Yield the newly created nodes.
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+    forms:
+      input:
+        - inet:ipv4
+      output:
+        - inet:dns:a
+        - inet:dns:mx
+        - inet:dns:ns
+        - inet:dns:txt
+        - inet:dns:aaaa
+        - inet:dns:cname

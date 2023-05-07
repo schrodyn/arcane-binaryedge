@@ -585,6 +585,7 @@ function query_domains_subdomains(fqdn, asof) {
         // ingest
         for $evt in $api_resp.events {
             [inet:fqdn=$evt]
+            [ <(seen)+ { yield $srcnode } ]
             yield $node
         }
 
@@ -612,6 +613,25 @@ function query_domains_dns(fqdn, asof) {
         $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] arg node {$fqdn}`)
         $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] asof: {$asof}`)
     }
+    yield $_query_domains_pdns("dns", $fqdn.repr(), $asof)
+}
+
+function query_domains_ip(ipaddr, asof) {
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_ip] arg node {$ipaddr}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_ip] asof: {$asof}`)
+    }
+
+    yield $_query_domains_pdns("ip", $ipaddr.repr(), $asof)
+}
+
+function _query_domains_pdns(endpoint, target, asof) {
+
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::_query_domains_pdns] arg endpoint {$endpoint}`)
+        $lib.print(`[arcane::binaryedge::ingest::_query_domains_pdns] arg target {$target}`)
+        $lib.print(`[arcane::binaryedge::ingest::_query_domains_pdns] asof: {$asof}`)
+    }
 
     // API response doesn't tell us we have a next page. Gotta figure it
     // out for ourselves.
@@ -621,13 +641,26 @@ function query_domains_dns(fqdn, asof) {
     while ($has_next)
     {
         // query
-        $api_resp = $api.query_domains_dns($fqdn.repr(), $asof, $current_page)
-        if ($api_resp = $lib.null) { yield $lib.null }
+        switch $endpoint {
+            "dns": {
+                $api_resp = $api.query_domains_dns($target, $asof, $current_page)
+                if ($api_resp = $lib.null) { yield $lib.null }
+            }
+            "ip": {
+                $api_resp = $api.query_domains_ip($target, $asof, $current_page)
+                if ($api_resp = $lib.null) { yield $lib.null }
+            }
+            "search": {
+                $api_resp = $api.query_domains_search($target, $asof, $current_page)
+                if ($api_resp = $lib.null) { yield $lib.null }
+            }
+        }
 
         // ingest
         for $evt in $api_resp.events {
 
             // "updated_at": "2022-06-02T08:59:17.221189"
+            $updated = $lib.time.parse($evt.updated_at, '%Y-%m-%dT%H:%M:%S.%f')
             $rrname = $evt.domain
             // $lib.print(`{$evt}`)
 
@@ -640,32 +673,32 @@ function query_domains_dns(fqdn, asof) {
                     "root": {} // Ignored.
                     "A": {
                         for $row in $rdata {
-                            [inet:dns:a=($rrname, $row)]
+                            [inet:dns:a=($rrname, $row) .seen=($updated)]
                         }
                     }
                     "AAAA": {
                         for $row in $rdata {
-                            [inet:dns:aaaa=($rrname, $row)]
+                            [inet:dns:aaaa=($rrname, $row) .seen=($updated)]
                         }
                     }
                     "NS": {
                         for $row in $rdata {
-                            [inet:dns:ns=($rrname, $row)]
+                            [inet:dns:ns=($rrname, $row) .seen=($updated)]
                         }
                     }
                     "TXT": {
                         for $row in $rdata {
-                            [inet:dns:txt=($rrname, $row)]
+                            [inet:dns:txt=($rrname, $row) .seen=($updated)]
                         }
                     }
                     "MX": {
                         for $row in $rdata {
-                            [inet:dns:mx=($rrname, $row)]
+                            [inet:dns:mx=($rrname, $row) .seen=($updated)]
                         }
                     }
                     "CNAME": {
                         for $row in $rdata {
-                            [inet:dns:cname=($rrname, $row)]
+                            [inet:dns:cname=($rrname, $row) .seen=($updated)]
                         }
                     }
                     *: {
@@ -688,7 +721,17 @@ function query_domains_dns(fqdn, asof) {
         else { $has_next = $lib.false }
     }
 
+    [ <(seen)+ { yield $srcnode } ]
     if $lib.debug {
-        $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] Yielding {$node}`)
+        $lib.print(`[arcane::binaryedge::ingest::_query_domains_pdns] Yielding {$node}`)
     }
+}
+
+function query_domains_search(query, asof) {
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_search] arg query {$query}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_search] asof: {$asof}`)
+    }
+
+    yield $_query_domains_pdns("search", $query, $asof)
 }

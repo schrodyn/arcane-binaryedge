@@ -180,3 +180,33 @@ function query_domains_dns(fqdn, asof, page) {
 
     return($http_get($api_url, $params, $asof))
 }
+
+function query_domains_ip(ipaddr, asof, page) {
+    if $lib.debug {
+        $lib.print(
+            `[arcane::binaryedge::api::query_domains_ip] Querying DNS for IP: {$ipaddr}`
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+    $params = $lib.dict(page=$page)
+
+    $api_url = `{$api_base_url}/query/domains/ip/{$ipaddr}`
+
+    return($http_get($api_url, $params, $asof))
+}
+
+function query_domains_search(query, asof, page) {
+    if $lib.debug {
+        $lib.print(
+            `[arcane::binaryedge::api::query_domains_search] Query: {$query}`
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+    $params = $lib.dict(page=$page, query=$query)
+
+    $api_url = `{$api_base_url}/query/domains/search`
+
+    return($http_get($api_url, $params, $asof))
+}
