@@ -145,3 +145,39 @@ commands:
         - inet:fqdn
       output:
         - inet:fqdn
+
+  - name: arcane.binaryedge.domains.dns
+    descr: Query BinaryEdge for DNS records of a domain.
+    asroot: False
+    cmdargs:
+      - - --asof
+        - default: "-30 days"
+          help: Specify the maximum age for a cached result. To disable caching, use --asof now.
+          type: str
+
+      - - --debug
+        - default: false
+          action: store_true
+          help: Show verbose debug output.
+          type: bool
+
+      - - --yield
+        - default: false
+          action: store_true
+          help: Yield the newly created nodes.
+
+      - - --timeout
+        - default: 0
+          type: int
+          help: Specify a timeout in seconds.
+    perms:
+      - [arcane, binaryedge, user]
+    forms:
+      input:
+        - inet:fqdn
+      output:
+        - inet:dns:a
+        - inet:dns:mx
+        - inet:dns:ns
+        - inet:dns:txt
+        - inet:dns:aaaa

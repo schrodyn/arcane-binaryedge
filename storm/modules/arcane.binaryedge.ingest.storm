@@ -605,3 +605,90 @@ function query_domains_subdomains(fqdn, asof) {
         $lib.print(`[arcane::binaryedge::ingest::query_domains_subdomains] Yielding {$node}`)
     }
 }
+
+function query_domains_dns(fqdn, asof) {
+
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] arg node {$fqdn}`)
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] asof: {$asof}`)
+    }
+
+    // API response doesn't tell us we have a next page. Gotta figure it
+    // out for ourselves.
+    $has_next = $lib.true
+    $current_page = 1
+
+    while ($has_next)
+    {
+        // query
+        $api_resp = $api.query_domains_dns($fqdn.repr(), $asof, $current_page)
+        if ($api_resp = $lib.null) { yield $lib.null }
+
+        // ingest
+        for $evt in $api_resp.events {
+
+            // "updated_at": "2022-06-02T08:59:17.221189"
+            $rrname = $evt.domain
+            // $lib.print(`{$evt}`)
+
+            // Process each RRSet.
+            for ($rrtype, $rdata) in $evt {
+                switch $rrtype {
+                    "updated_at": {} // Already dealt with.
+                    "domain": {} // Already dealt with.
+                    "title": {} // Ignored
+                    "root": {} // Ignored.
+                    "A": {
+                        for $row in $rdata {
+                            [inet:dns:a=($rrname, $row)]
+                        }
+                    }
+                    "AAAA": {
+                        for $row in $rdata {
+                            [inet:dns:aaaa=($rrname, $row)]
+                        }
+                    }
+                    "NS": {
+                        for $row in $rdata {
+                            [inet:dns:ns=($rrname, $row)]
+                        }
+                    }
+                    "TXT": {
+                        for $row in $rdata {
+                            [inet:dns:txt=($rrname, $row)]
+                        }
+                    }
+                    "MX": {
+                        for $row in $rdata {
+                            [inet:dns:mx=($rrname, $row)]
+                        }
+                    }
+                    "CNAME": {
+                        for $row in $rdata {
+                            [inet:dns:cname=($rrname, $row)]
+                        }
+                    }
+                    *: {
+                        $lib.warn(`Unhandled DNS rrtype: {$rrtype}`)
+                    }
+                }
+            }
+        }
+
+        // Get total number of pages.
+        if ($api_resp.total > $api_resp.pagesize) {
+            $num_pages = (($api_resp.total / $api_resp.pagesize)+1)
+            if ($num_pages > 500) {$num_pages=500}
+
+            $current_page = ($current_page+1)
+            if ($current_page > $num_pages) {
+                $has_next = $lib.false
+            }
+        }
+        else { $has_next = $lib.false }
+    }
+
+    if $lib.debug {
+        $lib.print(`[arcane::binaryedge::ingest::query_domains_dns] Yielding {$node}`)
+    }
+}

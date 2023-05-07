@@ -160,3 +160,23 @@ function query_domains_subdomains(fqdn, asof, page) {
 
     return($http_get($api_url, $params, $asof))
 }
+
+function query_domains_dns(fqdn, asof, page) {
+    if $lib.debug {
+        $lib.print(
+            '[arcane::binaryedge::api::query_domains_dns] Querying DNS for: {fqdn}',
+            fqdn=$fqdn
+        )
+    }
+
+    $api_base_url = $modconf.api_url
+    $params = $lib.dict(page=$page)
+
+    $api_url = $lib.str.format(
+        "{api_base_url}/query/domains/dns/{fqdn}",
+        api_base_url=$api_base_url,
+        fqdn=$fqdn
+        )
+
+    return($http_get($api_url, $params, $asof))
+}
