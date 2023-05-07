@@ -657,6 +657,11 @@ function _query_domains_pdns(endpoint, target, asof) {
         }
 
         // ingest
+        if $lib.debug {
+            if ($api_resp.events.size() = 0) {
+                $lib.print(`[arcane::binaryedge::ingest::_query_domains_pdns] no results.`)
+            }
+        }
         for $evt in $api_resp.events {
 
             // "updated_at": "2022-06-02T08:59:17.221189"
