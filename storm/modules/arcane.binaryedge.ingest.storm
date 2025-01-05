@@ -316,6 +316,7 @@ function add_ssl_cert(cert) {
 
     if $lib.debug {
         $lib.print('[arcane::binaryedge::ingest::add_ssl_cert]')
+        $lib.pprint($cert)
     }
     // TODO: Do I want to end up with duplicate certificates?
     // How do I create the certificate consistent with the output of
@@ -326,11 +327,10 @@ function add_ssl_cert(cert) {
     $cert_dict = $cert.as_dict
     $public_key_info = $cert_dict.public_key_info
 
-    $modulus = $public_key_info.modulus.replace(':', '')
     $sha256_fp = $cert.sha256_fingerprint.replace(':', '')
     $serial_number = $cert_dict.serial_number
 
-    $guid = $lib.guid($sha256_fp, $modulus, $serial_number)
+    $guid = $lib.guid("arcane-binaryedge", $public_key_info, $serial_number)
 
     $subject_dn = $normalise_ssl_cert_dn($cert_dict.subject.distinguished_name)
     $issuer_dn = $normalise_ssl_cert_dn($cert_dict.issuer.distinguished_name)
@@ -342,13 +342,17 @@ function add_ssl_cert(cert) {
         :serial=$lib.hex.fromint($serial_number, 20)
         :validity:notbefore=$cert_dict.validity.not_before
         :validity:notafter=$cert_dict.validity.not_after
-        :rsa:key=($modulus, $public_key_info.exponent)
         :version=$cert_dict.version
         :selfsigned=$cert_dict.self_signed
         :sha256=$sha256_fp
         :sha1=$cert.sha1_fingerprint.replace(':', '')
     ]
     [ <(seen)+ { yield $srcnode } ]
+
+    if $public_key_info.modulus {
+        $modulus = $public_key_info.modulus.replace(':', '')
+        [:rsa:key=($modulus, $public_key_info.exponent)]
+    }
 
     if $cert_dict.subject.common_name {
         ($ok, $fqdn) = $lib.trycast(inet:fqdn, $cert_dict.subject.common_name)
@@ -383,15 +387,16 @@ function normalise_ssl_cert_dn(dn) {
 
     if $lib.debug {
         $lib.print('[arcane::binaryedge::ingest::normalise_ssl_cert_dn]')
+        $lib.pprint($dn)
     }
-    $parts = $dn.split(',')
+    $parts = $dn.split(';')
     // BE seem to display these in reverse order to what OpenSSL
     // presents. Tut tut.
     $parts.reverse()
 
     $i=0
     for $p in $parts {
-        $vals = $p.split(':')
+        $vals = $p.strip().split(':')
 
         $j=0
         for $v in $vals {
@@ -505,9 +510,15 @@ function add_http_request(http_data,
     if $resp.redirects {
         // TODO: Create HTTP reqeust.
         for $redir in $resp.redirects {
-            [
-                inet:urlredir=($redir.redirect_uri, $redir.headers.location)
-            ] | spin
+            if $lib.debug {
+                $lib.print(`[arcane::binaryedge::ingest::add_http_request] {$redir}`)
+            }
+            ($ok, $url) = $lib.trycast(inet:url, $redir.redirect_uri)
+            if $ok {
+                [
+                    inet:urlredir=($url, $redir.headers.Location)
+                ] | spin
+            }
         }
     }
 
